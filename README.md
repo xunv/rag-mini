@@ -57,7 +57,7 @@ cp .env.example .env
 # 按需修改 .env 中的参数（默认值开箱即用）
 ```
 
-### 3. 启动 Elasticsearch
+### 3. 启动基础设施
 
 ```bash
 cd docker && docker compose up -d
@@ -65,19 +65,12 @@ cd docker && docker compose up -d
 curl http://localhost:9200/_cluster/health
 ```
 
-### 3. 安装 Ollama 模型
+### 4. 安装 Ollama 模型
 
 ```bash
 # 安装 Ollama 后拉取所需模型
 ollama pull bge-large        # 向量嵌入模型
 ollama pull qwen2.5:3b       # LLM 生成模型
-```
-
-### 4. 配置环境变量
-
-```bash
-cp .env.example .env
-# 按需修改 .env 中的参数
 ```
 
 ### 5. 构建索引
@@ -90,7 +83,7 @@ uv run python -m src.indexer
 uv run python -m src.indexer --rebuild
 ```
 
-### 6. 交互式问答
+### 5. 交互式问答
 
 ```bash
 uv run python src/main.py
