@@ -1,0 +1,142 @@
+[
+  {
+    "id": 1,
+    "question": "红尘中一二等富贵温柔之地是指哪里？",
+    "expected_chapters": ["第1章"],
+    "keywords": ["姑苏", "阊门", "十里街", "仁清巷"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 2,
+    "question": "贾宝玉的通灵宝玉上刻着什么字？",
+    "expected_chapters": ["第8章"],
+    "keywords": ["莫失莫忘", "仙寿恒昌"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 3,
+    "question": "林黛玉进贾府时，贾母为什么流泪？",
+    "expected_chapters": ["第3章"],
+    "keywords": ["林黛玉", "贾母", "流泪", "外孙女"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 4,
+    "question": "王熙凤是怎样一个人？",
+    "expected_chapters": ["第3章", "第6章"],
+    "keywords": ["凤辣子", "泼辣", "精明", "管理"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 5,
+    "question": "宝玉挨打的原因是什么？",
+    "expected_chapters": ["第33章"],
+    "keywords": ["金钏", "琪官", "贾环", "告状"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 6,
+    "question": "黛玉葬花是在什么季节？",
+    "expected_chapters": ["第27章"],
+    "keywords": ["葬花", "落花", "春天", "花锄"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 7,
+    "question": "大观园是为谁建的？",
+    "expected_chapters": ["第16章", "第17章"],
+    "keywords": ["元春", "省亲", "贵妃", "大观园"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 8,
+    "question": "香菱的身世是什么？",
+    "expected_chapters": ["第1章", "第4章"],
+    "keywords": ["甄英莲", "拐子", "薛蟠", "冯渊"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 9,
+    "question": "刘姥姥一进荣国府是为了什么？",
+    "expected_chapters": ["第6章"],
+    "keywords": ["刘姥姥", "借钱", "王狗儿", "攀亲"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 10,
+    "question": "晴雯撕扇是哪一回？",
+    "expected_chapters": ["第31章"],
+    "keywords": ["晴雯", "撕扇", "宝玉", "跌扇"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 11,
+    "question": "贾宝玉的结局是什么？",
+    "expected_chapters": ["第119章", "第120章"],
+    "keywords": ["出家", "和尚", "宝玉", "悬崖撒手"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 12,
+    "question": "王熙凤的结局是什么？",
+    "expected_chapters": ["第113章", "第114章"],
+    "keywords": ["王熙凤", "凤姐", "病死", "丧礼", "金陵"],
+    "source": "hongloumeng.txt"
+  },
+  {
+    "id": 101,
+    "question": "民法典规定的诉讼时效是多长时间？",
+    "expected_chapters": [],
+    "keywords": ["三年", "诉讼时效"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 102,
+    "question": "多大年龄属于完全民事行为能力人？",
+    "expected_chapters": [],
+    "keywords": ["十八周岁", "完全民事行为能力"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 103,
+    "question": "民法典中限制民事行为能力的未成年人年龄标准是什么？",
+    "expected_chapters": [],
+    "keywords": ["八周岁", "限制民事行为能力"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 104,
+    "question": "离婚冷静期是多长时间？",
+    "expected_chapters": [],
+    "keywords": ["三十日", "冷静期"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 105,
+    "question": "高空抛物造成损害由谁承担责任？",
+    "expected_chapters": [],
+    "keywords": ["高空", "抛掷物", "落物", "侵权人"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 106,
+    "question": "宣告失踪需要下落不明多长时间？",
+    "expected_chapters": [],
+    "keywords": ["二年", "下落不明", "失踪"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 107,
+    "question": "居住权是否可以转或继承？",
+    "expected_chapters": [],
+    "keywords": ["居住权", "不得转让", "继承"],
+    "source": "minfadian.pdf"
+  },
+  {
+    "id": 108,
+    "question": "未成年人的监护人是谁？",
+    "expected_chapters": [],
+    "keywords": ["父母", "监护人", "未成年"],
+    "source": "minfadian.pdf"
+  }
+]
