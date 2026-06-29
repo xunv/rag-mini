@@ -1,10 +1,12 @@
-"""索引构建脚本 — 扫描 docs/ 目录，支持 txt/pdf，增量入库"""
+"""索引构建脚本 — 扫描 docs/ 目录，支持 txt/pdf，增量入库（SQLite + sqlite-vec + FTS5）"""
 
 import os
 import re
 import hashlib
 import logging
 import argparse
+import sqlite3
+import struct
 
 # 兼容直接运行 (python src/indexer.py) 和模块运行 (python -m src.indexer)
 if __name__ == "__main__" and __package__ is None:
@@ -14,12 +16,11 @@ if __name__ == "__main__" and __package__ is None:
     __package__ = "src"
 
 import fitz  # pymupdf
-from elasticsearch import Elasticsearch
-from elasticsearch.helpers import bulk
+import sqlite_vec
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .config import (
-    ES_INDEX_NAME,
+    DB_PATH,
     DATA_DIR,
     CHUNK_SIZE,
     CHUNK_OVERLAP,
@@ -27,49 +28,79 @@ from .config import (
     VECTOR_DIMS,
 )
 from .embedding import get_embeddings_batch
-from .match import get_es_client
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EXTENSIONS = {".txt", ".pdf"}
 
 
-# ==================== 索引管理 ====================
+def _serialize_vector(vec: list[float]) -> bytes:
+    """将 float 列表序列化为 sqlite-vec 需要的 bytes 格式"""
+    return struct.pack(f"{len(vec)}f", *vec)
 
 
-def ensure_index(client: Elasticsearch, rebuild: bool = False) -> None:
-    """确保向量索引存在，rebuild 时先删除旧索引"""
-    if rebuild and client.indices.exists(index=ES_INDEX_NAME):
-        client.indices.delete(index=ES_INDEX_NAME)
-        logger.info(f"已删除旧索引 '{ES_INDEX_NAME}'")
+# ==================== 数据库初始化 ====================
 
-    if client.indices.exists(index=ES_INDEX_NAME):
-        logger.info(f"索引 '{ES_INDEX_NAME}' 已存在，跳过创建")
-        return
 
-    index_mapping = {
-        "mappings": {
-            "properties": {
-                "text_content": {
-                    "type": "text",
-                    "analyzer": "ik_max_word",
-                    "search_analyzer": "ik_smart",
-                },
-                "chapter": {"type": "keyword"},
-                "chapter_title": {"type": "keyword"},
-                "text_vector": {
-                    "type": "dense_vector",
-                    "dims": VECTOR_DIMS,
-                    "index": True,
-                    "similarity": "cosine",
-                },
-                "source_file": {"type": "keyword"},
-                "file_hash": {"type": "keyword"},
-            }
-        }
-    }
-    client.indices.create(index=ES_INDEX_NAME, body=index_mapping)
-    logger.info(f"索引 '{ES_INDEX_NAME}' 创建成功")
+def init_db(rebuild: bool = False) -> sqlite3.Connection:
+    """初始化 SQLite 数据库，创建表结构"""
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
+    if rebuild and os.path.exists(DB_PATH):
+        os.remove(DB_PATH)
+        logger.info(f"已删除旧数据库: {DB_PATH}")
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    conn.row_factory = sqlite3.Row
+
+    # 主表：存储文档片段
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chunks (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            text_content TEXT NOT NULL,
+            chapter TEXT DEFAULT '',
+            chapter_title TEXT DEFAULT '',
+            source_file TEXT NOT NULL,
+            file_hash TEXT NOT NULL
+        )
+    """)
+
+    # 向量表：sqlite-vec 虚拟表
+    conn.execute(f"""
+        CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
+            embedding float[{VECTOR_DIMS}]
+        )
+    """)
+
+    # FTS5 全文索引表
+    conn.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            text_content,
+            content='chunks',
+            content_rowid='rowid'
+        )
+    """)
+
+    # FTS5 同步触发器
+    conn.executescript("""
+        CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO chunks_fts(rowid, text_content) VALUES (new.rowid, new.text_content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text_content) VALUES('delete', old.rowid, old.text_content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+            INSERT INTO chunks_fts(chunks_fts, rowid, text_content) VALUES('delete', old.rowid, old.text_content);
+            INSERT INTO chunks_fts(rowid, text_content) VALUES (new.rowid, new.text_content);
+        END;
+    """)
+
+    conn.commit()
+    logger.info(f"数据库已就绪: {DB_PATH}")
+    return conn
 
 
 # ==================== 文件扫描 ====================
@@ -95,52 +126,42 @@ def compute_file_hash(file_path: str) -> str:
     return h.hexdigest()
 
 
-def get_indexed_file_hashes(client: Elasticsearch) -> dict[str, str]:
-    """查询 ES 中已索引文件的哈希值，返回 {source_file: file_hash}"""
-    if not client.indices.exists(index=ES_INDEX_NAME):
-        return {}
-
-    # 聚合查询每个 source_file 的 file_hash
-    resp = client.search(
-        index=ES_INDEX_NAME,
-        body={
-            "size": 0,
-            "aggs": {
-                "files": {
-                    "terms": {"field": "source_file", "size": 1000},
-                    "aggs": {
-                        "hash": {"terms": {"field": "file_hash", "size": 1}}
-                    },
-                }
-            },
-        },
-    )
-    result = {}
-    for bucket in resp["aggregations"]["files"]["buckets"]:
-        filename = bucket["key"]
-        hash_buckets = bucket["hash"]["buckets"]
-        if hash_buckets:
-            result[filename] = hash_buckets[0]["key"]
-    return result
+def get_indexed_file_hashes(conn: sqlite3.Connection) -> dict[str, str]:
+    """查询已索引文件的哈希值，返回 {source_file: file_hash}"""
+    rows = conn.execute(
+        "SELECT DISTINCT source_file, file_hash FROM chunks"
+    ).fetchall()
+    return {row["source_file"]: row["file_hash"] for row in rows}
 
 
-def delete_file_docs(client: Elasticsearch, source_file: str) -> int:
-    """删除某个文件的所有文档"""
-    resp = client.delete_by_query(
-        index=ES_INDEX_NAME,
-        body={"query": {"term": {"source_file": source_file}}},
-        refresh=True,
-    )
-    deleted = resp.get("deleted", 0)
-    logger.info(f"已删除文件 '{source_file}' 的 {deleted} 条旧文档")
-    return deleted
+def delete_file_docs(conn: sqlite3.Connection, source_file: str) -> int:
+    """删除某个文件的所有文档（含向量和 FTS）"""
+    # 获取要删除的 rowid
+    rowids = [
+        row[0] for row in conn.execute(
+            "SELECT rowid FROM chunks WHERE source_file = ?", (source_file,)
+        ).fetchall()
+    ]
+    if not rowids:
+        return 0
+
+    # 删除向量表
+    for rid in rowids:
+        conn.execute("DELETE FROM vec_chunks WHERE rowid = ?", (rid,))
+
+    # 删除主表（触发器会自动同步 FTS）
+    conn.execute("DELETE FROM chunks WHERE source_file = ?", (source_file,))
+    conn.commit()
+
+    logger.info(f"已删除文件 '{source_file}' 的 {len(rowids)} 条旧文档")
+    return len(rowids)
 
 
 # ==================== 文档加载 ====================
 
 
 def extract_chapter_info(line: str) -> tuple[str, str] | None:
-    """从行文本中提取章节号和标题，如 '第1章 甄士隐梦幻识通灵 ...'"""
+    """从行文本中提取章节号和标题"""
     match = re.match(r"第(\d+)章\s+(.+?)(?:\r|\n|$)", line.strip())
     if match:
         return f"第{match.group(1)}章", match.group(2).strip()
@@ -152,7 +173,6 @@ def load_txt(file_path: str) -> list[dict]:
     with open(file_path, "r", encoding="utf-8") as f:
         raw_text = f.read()
 
-    # 按章节标题分段
     chapter_blocks: list[tuple[str, str, str]] = []
     current_chapter = ""
     current_title = ""
@@ -171,14 +191,11 @@ def load_txt(file_path: str) -> list[dict]:
     if current_chapter and current_lines:
         chapter_blocks.append((current_chapter, current_title, "\n".join(current_lines)))
 
-    # 如果没有章节结构，整体作为一个块
     if not chapter_blocks:
         chapter_blocks = [("", "", raw_text)]
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=CHUNK_SEPARATORS,
+        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP, separators=CHUNK_SEPARATORS,
     )
 
     results = []
@@ -188,7 +205,6 @@ def load_txt(file_path: str) -> list[dict]:
             if not chunk.strip():
                 continue
             results.append({"text": chunk, "chapter": chapter, "chapter_title": title})
-
     return results
 
 
@@ -207,19 +223,10 @@ def load_pdf(file_path: str) -> list[dict]:
         return []
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=CHUNK_SEPARATORS,
+        chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP, separators=CHUNK_SEPARATORS,
     )
-
     chunks = splitter.split_text(full_text)
-    results = []
-    for chunk in chunks:
-        if not chunk.strip():
-            continue
-        results.append({"text": chunk, "chapter": "", "chapter_title": ""})
-
-    return results
+    return [{"text": c, "chapter": "", "chapter_title": ""} for c in chunks if c.strip()]
 
 
 def load_file(file_path: str) -> list[dict]:
@@ -229,15 +236,14 @@ def load_file(file_path: str) -> list[dict]:
         return load_txt(file_path)
     elif ext == ".pdf":
         return load_pdf(file_path)
-    else:
-        raise ValueError(f"不支持的文件格式: {ext}")
+    raise ValueError(f"不支持的文件格式: {ext}")
 
 
 # ==================== 索引写入 ====================
 
 
-def index_file(client: Elasticsearch, file_path: str, file_hash: str, batch_size: int = 100) -> int:
-    """对单个文件进行切片、向量化、写入 ES"""
+def index_file(conn: sqlite3.Connection, file_path: str, file_hash: str) -> int:
+    """对单个文件进行切片、向量化、写入 SQLite"""
     source_file = os.path.basename(file_path)
     logger.info(f"正在处理文件: {source_file}")
 
@@ -247,35 +253,37 @@ def index_file(client: Elasticsearch, file_path: str, file_hash: str, batch_size
         return 0
 
     logger.info(f"  切分为 {len(chunks)} 个片段，开始向量化...")
-
     texts = [c["text"] for c in chunks]
     vectors = get_embeddings_batch(texts, batch_size=32)
+    logger.info(f"  向量化完成，写入数据库...")
 
-    logger.info(f"  向量化完成，写入 ES...")
+    # 批量写入：先插入主表获取 rowid，再批量插入向量表
+    chunk_rows = [
+        (c["text"], c["chapter"], c["chapter_title"], source_file, file_hash)
+        for c in chunks
+    ]
+    conn.executemany(
+        "INSERT INTO chunks (text_content, chapter, chapter_title, source_file, file_hash) VALUES (?, ?, ?, ?, ?)",
+        chunk_rows,
+    )
 
-    # 用 source_file + 序号作为文档 ID，方便增量更新
-    def gen_bulk_actions():
-        for i, (chunk_data, vector) in enumerate(zip(chunks, vectors)):
-            yield {
-                "_index": ES_INDEX_NAME,
-                "_id": f"{source_file}_{i}",
-                "_source": {
-                    "text_content": chunk_data["text"],
-                    "text_vector": vector,
-                    "chapter": chunk_data["chapter"],
-                    "chapter_title": chunk_data["chapter_title"],
-                    "source_file": source_file,
-                    "file_hash": file_hash,
-                },
-            }
+    # 获取刚插入的 rowid 范围
+    last_rowid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+    first_rowid = last_rowid - len(chunks) + 1
 
-    success, failed = bulk(client, gen_bulk_actions(), chunk_size=batch_size)
-    if failed:
-        for item in failed[:5]:
-            logger.error(f"  写入失败: {item}")
+    # 批量插入向量
+    vec_rows = [
+        (first_rowid + i, _serialize_vector(vec))
+        for i, vec in enumerate(vectors)
+    ]
+    conn.executemany(
+        "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
+        vec_rows,
+    )
 
-    logger.info(f"  写入完成: {success} 条成功")
-    return success
+    conn.commit()
+    logger.info(f"  写入完成: {len(chunks)} 条")
+    return len(chunks)
 
 
 # ==================== 主流程 ====================
@@ -285,21 +293,18 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(description="RAG 索引构建工具（支持增量入库）")
-    parser.add_argument("--rebuild", action="store_true", help="删除旧索引并全量重建")
+    parser.add_argument("--rebuild", action="store_true", help="删除旧数据库并全量重建")
     parser.add_argument("--dir", default=DATA_DIR, help=f"文档目录（默认: {DATA_DIR}）")
     args = parser.parse_args()
 
-    client = get_es_client()
-    ensure_index(client, rebuild=args.rebuild)
+    conn = init_db(rebuild=args.rebuild)
 
-    # 扫描文件
     files = scan_files(args.dir)
     if not files:
         logger.warning("未找到任何支持的文件")
         return
 
-    # 获取已索引文件的哈希
-    indexed_hashes = get_indexed_file_hashes(client) if not args.rebuild else {}
+    indexed_hashes = get_indexed_file_hashes(conn) if not args.rebuild else {}
 
     total_indexed = 0
     skipped = 0
@@ -308,22 +313,18 @@ def main():
         source_file = os.path.basename(file_path)
         file_hash = compute_file_hash(file_path)
 
-        # 增量判断：哈希一致则跳过
         if source_file in indexed_hashes and indexed_hashes[source_file] == file_hash:
             logger.info(f"文件 '{source_file}' 未变更，跳过")
             skipped += 1
             continue
 
-        # 文件有变更，先删除旧文档再重新入库
         if source_file in indexed_hashes:
-            delete_file_docs(client, source_file)
+            delete_file_docs(conn, source_file)
 
-        count = index_file(client, file_path, file_hash)
+        count = index_file(conn, file_path, file_hash)
         total_indexed += count
 
-    # 刷新索引使文档可搜索
-    client.indices.refresh(index=ES_INDEX_NAME)
-
+    conn.close()
     logger.info(f"\n入库完成: 新增/更新 {total_indexed} 条，跳过 {skipped} 个未变更文件")
 
 

@@ -8,9 +8,8 @@ from dotenv import load_dotenv
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
-# ==================== Elasticsearch ====================
-ES_URL = os.getenv("ES_URL", "http://localhost:9200")
-ES_INDEX_NAME = os.getenv("ES_INDEX_NAME", "hongloumeng_index")
+# ==================== SQLite 数据库 ====================
+DB_PATH = os.getenv("DB_PATH", str(_PROJECT_ROOT / "data" / "rag.db"))
 
 # ==================== 嵌入模型（通过 Ollama embedding API） ====================
 EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "bge-large:latest")
@@ -23,7 +22,6 @@ CHAT_MODEL_NAME = os.getenv("CHAT_MODEL_NAME", "qwen2.5:3b")
 
 # ==================== 数据文件 ====================
 DATA_DIR = os.getenv("DATA_DIR", "docs")
-FILE_PATH = os.getenv("FILE_PATH", os.path.join(DATA_DIR, "hongloumeng.txt"))
 
 # ==================== 切片参数 ====================
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "600"))
@@ -33,7 +31,6 @@ CHUNK_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "，", " "]
 
 # ==================== 检索参数 ====================
 SEARCH_TOP_K = int(os.getenv("SEARCH_TOP_K", "15"))
-SEARCH_NUM_CANDIDATES = int(os.getenv("SEARCH_NUM_CANDIDATES", "300"))
 
 # ==================== RRF 融合参数 ====================
 RRF_RANK_CONSTANT = int(os.getenv("RRF_RANK_CONSTANT", "60"))
@@ -47,7 +44,3 @@ if abs(_weight_sum - 1.0) > 1e-6:
 
 if CHUNK_OVERLAP >= CHUNK_SIZE:
     raise ValueError(f"CHUNK_OVERLAP ({CHUNK_OVERLAP}) 必须小于 CHUNK_SIZE ({CHUNK_SIZE})")
-
-if SEARCH_NUM_CANDIDATES < SEARCH_TOP_K:
-    raise ValueError(f"SEARCH_NUM_CANDIDATES ({SEARCH_NUM_CANDIDATES}) 必须大于等于 SEARCH_TOP_K ({SEARCH_TOP_K})")
-

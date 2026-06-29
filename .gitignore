@@ -27,5 +27,5 @@ Thumbs.db
 # Model weights (downloaded separately)
 models/
 
-# Docker data (bind mount volumes)
-docker/data/
+# 数据目录（SQLite 数据库文件）
+data/

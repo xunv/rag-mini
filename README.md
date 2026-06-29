@@ -1,6 +1,6 @@
 # RAG 知识库问答系统
 
-基于 **Elasticsearch 混合检索 + Ollama** 的最小 RAG 实现，支持多格式文档（txt/pdf）增量入库。
+基于 **sqlite-vec + FTS5 混合检索 + Ollama** 的最小 RAG 实现，支持多格式文档（txt/pdf）增量入库。
 
 ## 架构
 
@@ -10,8 +10,8 @@
 
 检索流程：
 
-1. **KNN 向量检索** — Ollama bge-large 编码查询，ES cosine similarity 语义匹配
-2. **BM25 文本检索** — ES ik 分词全文匹配，弥补向量检索不足
+1. **KNN 向量检索** — sqlite-vec 余弦相似度语义匹配
+2. **BM25 文本检索** — SQLite FTS5 全文匹配
 3. **RRF 融合排序** — 加权 Reciprocal Rank Fusion，合并两路结果
 
 ## 项目结构
@@ -26,12 +26,10 @@ rag/
 │   ├── indexer.py         # 索引构建（多格式、增量入库）
 │   └── main.py            # 交互式问答入口
 ├── tests/
-│   ├── eval.py            # 检索质量评脚本
+│   ├── eval.py            # 检索质量评测脚本
 │   ├── eval_dataset.json  # 评测数据集
 │   └── debug_recall.py    # 召回调试工具
-├── docker/
-│   ├── docker-compose.yml # Elasticsearch + IK 分词
-│   └── Dockerfile.elasticsearch
+├── data/                  # SQLite 数据库文件（自动生成）
 ├── docs/                  # 知识库文档（txt/pdf）
 ├── .env                   # 运行时配置
 ├── .env.example           # 配置模板
@@ -57,15 +55,7 @@ cp .env.example .env
 # 按需修改 .env 中的参数（默认值开箱即用）
 ```
 
-### 3. 启动基础设施
-
-```bash
-cd docker && docker compose up -d
-# 等待 ES 就绪（约 30 秒）
-curl http://localhost:9200/_cluster/health
-```
-
-### 4. 安装 Ollama 模型
+### 3. 安装 Ollama 模型
 
 ```bash
 # 安装 Ollama 后拉取所需模型
@@ -73,7 +63,7 @@ ollama pull bge-large        # 向量嵌入模型
 ollama pull qwen2.5:3b       # LLM 生成模型
 ```
 
-### 5. 构建索引
+### 4. 构建索引
 
 ```bash
 # 扫描 docs/ 目录，增量入库（支持 txt/pdf）
@@ -95,20 +85,22 @@ uv run python src/main.py
 
 所有参数支持 `.env` 环境变量覆盖，默认值定义在 `src/config.py` 中。
 
-| 参数                    | 默认值                  | 说明                   |
-| ----------------------- | ----------------------- | ---------------------- |
-| `ES_URL`                | `http://localhost:9200` | Elasticsearch 地址     |
-| `ES_INDEX_NAME`         | `hongloumeng_index`     | 索引名称               |
-| `EMBED_MODEL_NAME`      | `bge-large:latest`      | Ollama 嵌入模型        |
-| `CHAT_MODEL_NAME`       | `qwen2.5:3b`            | Ollama 生成模型        |
-| `CHUNK_SIZE`            | `600`                   | 文本切片大小（字符数） |
-| `CHUNK_OVERLAP`         | `80`                    | 切片重叠字符数         |
-| `SEARCH_TOP_K`          | `5`                     | 检索返回片段数         |
-| `SEARCH_NUM_CANDIDATES` | `200`                   | KNN 粗筛候选数         |
-| `KNN_WEIGHT`            | `0.7`                   | KNN 向量检索权重       |
-| `BM25_WEIGHT`           | `0.3`                   | BM25 文本检索权重      |
+| 参数               | 默认值             | 说明                   |
+| ------------------ | ------------------ | ---------------------- |
+| `DB_PATH`          | `data/rag.db`      | SQLite 数据库路径      |
+| `EMBED_MODEL_NAME` | `bge-large:latest` | Ollama 嵌入模型        |
+| `CHAT_MODEL_NAME`  | `qwen2.5:3b`       | Ollama 生成模型        |
+| `CHUNK_SIZE`       | `600`              | 文本切片大小（字符数） |
+| `CHUNK_OVERLAP`    | `80`               | 切片重叠字符数         |
+| `SEARCH_TOP_K`     | `15`               | 检索返回片段数         |
+| `KNN_WEIGHT`       | `0.25`             | KNN 向量检索权重       |
+| `BM25_WEIGHT`      | `0.75`             | BM25 文本检索权重      |
 
 ## 核心特性
+
+### 零外部依赖
+
+无需 Docker、无需 Elasticsearch，数据库就是一个本地 SQLite 文件。安装 Python 依赖后即可运行。
 
 ### 多格式文档支持
 
@@ -136,7 +128,8 @@ uv run python -m tests.eval
 
 ## 技术栈
 
-- **Elasticsearch 8.x** + IK 分词 — 向量索引 + BM25 全文检索
+- **sqlite-vec** — 向量相似度检索（cosine distance）
+- **SQLite FTS5** — BM25 全文检索
 - **Ollama** — 本地 LLM 推理 + 向量嵌入（bge-large / qwen2.5）
 - **langchain-text-splitters** — 中文优先分隔符切片
 - **PyMuPDF** — PDF 文本提取
