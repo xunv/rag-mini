@@ -10,8 +10,8 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "src"
 
-from .match import search
-from .llm import chat_with_ollama
+from .match import RetrievalError, search
+from .models import chat_with_ollama
 from .config import SEARCH_TOP_K
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -50,13 +50,23 @@ def rag_query(question: str, top_k: int = SEARCH_TOP_K) -> dict:
     """完整的 RAG 流程：检索 -> 拼接上下文 -> LLM 生成"""
     # 1. 检索
     logger.info(f"正在检索: '{question}'")
-    matched = search(question, top_k=top_k)
+    try:
+        matched = search(question, top_k=top_k)
+    except RetrievalError as e:
+        logger.error(str(e))
+        return {
+            "answer": f"检索系统失败：{e}",
+            "sources": [],
+            "context": "",
+            "error": str(e),
+        }
 
     if not matched:
         return {
             "answer": "抱歉，未找到相关的参考资料，无法回答该问题。",
             "sources": [],
             "context": "",
+            "error": "",
         }
 
     # 2. 拼接上下文
@@ -69,7 +79,7 @@ def rag_query(question: str, top_k: int = SEARCH_TOP_K) -> dict:
         answer = chat_with_ollama(prompt, system_prompt=RAG_SYSTEM_PROMPT)
     except Exception as e:
         logger.error(f"LLM 生成失败: {e}")
-        answer = "抱歉，LLM 生成失败，请稍后重试。"
+        answer = f"LLM 生成失败：{e}"
 
     return {
         "answer": answer,
@@ -83,6 +93,7 @@ def rag_query(question: str, top_k: int = SEARCH_TOP_K) -> dict:
             for doc in matched
         ],
         "context": context,
+        "error": "",
     }
 
 

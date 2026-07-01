@@ -4,6 +4,7 @@ import json
 import logging
 import argparse
 from pathlib import Path
+from collections.abc import Callable
 
 from src.match import search
 from src.config import SEARCH_TOP_K
@@ -26,7 +27,11 @@ def load_dataset(file_path: str = _DEFAULT_DATASET) -> list[dict]:
         return json.load(f)
 
 
-def evaluate_retrieval(top_k: int = SEARCH_TOP_K, dataset_path: str = _DEFAULT_DATASET) -> dict:
+def evaluate_retrieval(
+    top_k: int = SEARCH_TOP_K,
+    dataset_path: str = _DEFAULT_DATASET,
+    search_fn: Callable[[str, int], list[dict]] = search,
+) -> dict:
     """评测检索质量
 
     Args:
@@ -51,7 +56,7 @@ def evaluate_retrieval(top_k: int = SEARCH_TOP_K, dataset_path: str = _DEFAULT_D
         expected_source = item.get("source", "")
 
         # 执行检索
-        matched = search(question, top_k=top_k)
+        matched = search_fn(question, top_k=top_k)
 
         # 提取检索到的章节
         retrieved_chapters = set()
@@ -122,9 +127,9 @@ def evaluate_retrieval(top_k: int = SEARCH_TOP_K, dataset_path: str = _DEFAULT_D
     metrics = {
         "total_questions": total,
         "top_k": top_k,
-        "chapter_hit_rate": chapter_hits / total,  # 章节命中率（宽松）
-        "content_hit_rate": content_hits / total,  # 答案片段命中率（严格）
-        "mrr": sum(reciprocal_ranks) / total,  # Mean Reciprocal Rank
+        "chapter_hit_rate": chapter_hits / total if total else 0.0,  # 章节命中率（宽松）
+        "content_hit_rate": content_hits / total if total else 0.0,  # 答案片段命中率（严格）
+        "mrr": sum(reciprocal_ranks) / total if total else 0.0,  # Mean Reciprocal Rank
     }
 
     return {"metrics": metrics, "details": results}
